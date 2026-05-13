@@ -5,7 +5,7 @@
 # ==========================================
 
 require File.expand_path(File.dirname(__FILE__)) + "/../test_helper"
-require 'cmock_generator_plugin_callback'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_callback'
 
 describe CMockGeneratorPluginCallback, "Verify CMockGeneratorPluginCallback Module" do
 
@@ -14,6 +14,7 @@ describe CMockGeneratorPluginCallback, "Verify CMockGeneratorPluginCallback Modu
 
     @config.expect :callback_include_count, true
     @config.expect :callback_after_arg_check, false
+    @config.expect :plugins, [:ignore]
 
     @cmock_generator_plugin_callback = CMockGeneratorPluginCallback.new(@config, @utils)
   end
@@ -240,6 +241,7 @@ describe CMockGeneratorPluginCallback, "Verify CMockGeneratorPluginCallback Modu
 
     expected = ["void Lemon_StubWithCallback(CMOCK_Lemon_CALLBACK Callback)\n",
                 "{\n",
+                "  Mock.Lemon_IgnoreBool = (int)0;\n",
                 "  Mock.Lemon_CallbackFunctionPointer = Callback;\n",
                 "}\n\n"
                ].join

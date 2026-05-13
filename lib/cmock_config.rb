@@ -11,12 +11,15 @@ class CMockConfig
     :framework                   => :unity,
     :mock_path                   => 'mocks',
     :mock_prefix                 => 'Mock',
+    :mock_suffix                 => '',
+    :weak                        => '',
     :subdir                      => nil,
     :plugins                     => [],
     :strippables                 => ['(?:__attribute__\s*\(+.*?\)+)'],
     :attributes                  => ['__ramfunc', '__irq', '__fiq', 'register', 'extern'],
     :c_calling_conventions       => ['__stdcall', '__cdecl', '__fastcall'],
     :enforce_strict_ordering     => false,
+    :fail_on_unexpected_calls    => true,
     :unity_helper_path           => false,
     :treat_as                    => {},
     :treat_as_void               => [],
@@ -57,6 +60,7 @@ class CMockConfig
       end
     end
     options[:unity_helper_path] ||= options[:unity_helper]
+    options[:unity_helper_path] = [options[:unity_helper_path]] if options[:unity_helper_path].is_a? String
     options[:plugins].compact!
     options[:plugins].map! {|p| p.to_sym}
     @options = options
@@ -83,8 +87,11 @@ class CMockConfig
   end
 
   def load_unity_helper
-    return File.new(@options[:unity_helper_path]).read if (@options[:unity_helper_path])
-    return nil
+    return nil unless (@options[:unity_helper_path])
+
+    return @options[:unity_helper_path].inject("") do |unity_helper, filename|
+      unity_helper + "\n" + File.new(filename).read
+    end
   end
 
   def standard_treat_as_map
@@ -113,6 +120,8 @@ class CMockConfig
       'UINT32'          => 'HEX32',
       'UINT32_T'        => 'HEX32',
       'void*'           => 'HEX8_ARRAY',
+      'void const*'     => 'HEX8_ARRAY',
+      'const void*'     => 'HEX8_ARRAY',
       'unsigned short'  => 'HEX16',
       'uint16'          => 'HEX16',
       'uint16_t'        => 'HEX16',
@@ -124,6 +133,8 @@ class CMockConfig
       'UINT8'           => 'HEX8',
       'UINT8_T'         => 'HEX8',
       'char*'           => 'STRING',
+      'char const*'     => 'STRING',
+      'const char*'     => 'STRING',
       'pCHAR'           => 'STRING',
       'cstring'         => 'STRING',
       'CSTRING'         => 'STRING',

@@ -18,14 +18,17 @@ RUNNERS_DIR = File.join(TEST_BUILD_DIR, 'runners')
 MOCKS_DIR = File.join(TEST_BUILD_DIR, 'mocks')
 TEST_BIN_DIR = TEST_BUILD_DIR
 MOCK_PREFIX = ENV.fetch('TEST_MOCK_PREFIX', 'mock_')
+MOCK_SUFFIX = ENV.fetch('TEST_MOCK_SUFFIX', '')
 TEST_MAKEFILE = ENV.fetch('TEST_MAKEFILE', File.join(TEST_BUILD_DIR, 'MakefileTestSupport'))
-MOCK_MATCHER = /#{MOCK_PREFIX}[A-Za-z_][A-Za-z0-9_\-\.]+/
+MOCK_MATCHER = /#{MOCK_PREFIX}[A-Za-z_][A-Za-z0-9_\-\.]+#{MOCK_SUFFIX}/
 
 [TEST_BUILD_DIR, OBJ_DIR, RUNNERS_DIR, MOCKS_DIR, TEST_BIN_DIR].each do |dir|
   FileUtils.mkdir_p dir
 end
 
 all_headers_to_mock = []
+
+suppress_error = !ARGV.nil? && !ARGV.empty? && (ARGV[0].upcase == "--SILENT")
 
 File.open(TEST_MAKEFILE, "w") do |mkfile|
 
@@ -56,7 +59,8 @@ File.open(TEST_MAKEFILE, "w") do |mkfile|
   test_sources = Dir["#{TEST_DIR}/**/test_*.c"]
   test_targets = []
   generator = UnityTestRunnerGenerator.new
-  all_headers = Dir["#{SRC_DIR}/**/*.h"]
+  all_headers = Dir["#{SRC_DIR}/**/{[!#{MOCK_PREFIX}]}*{[!#{MOCK_SUFFIX}]}.h"]  #headers that begin with prefix or end with suffix are not included
+  makefile_targets = []
 
   test_sources.each do |test|
     module_name = File.basename(test, '.c')
@@ -65,14 +69,39 @@ File.open(TEST_MAKEFILE, "w") do |mkfile|
     runner_source = File.join(RUNNERS_DIR, "runner_#{module_name}.c")
     runner_obj = File.join(OBJ_DIR, "runner_#{module_name}.o")
     test_bin = File.join(TEST_BIN_DIR, module_name)
-    test_results = File.join(TEST_BIN_DIR, module_name + '.result')
+    test_results = File.join(TEST_BIN_DIR, module_name + '.testresult')
+
+    cfg = {
+      src: test,
+      includes: generator.find_includes(File.readlines(test).join(''))
+    }
 
     # Build main project modules, with TEST defined
     module_src = File.join(SRC_DIR, "#{src_module_name}.c")
     module_obj = File.join(OBJ_DIR, "#{src_module_name}.o")
-    mkfile.puts "#{module_obj}: #{module_src}"
-    mkfile.puts "\t${CC} -o $@ -c $< -DTEST -I #{SRC_DIR}"
-    mkfile.puts ""
+    if not makefile_targets.include? module_obj
+        makefile_targets.push(module_obj)
+        mkfile.puts "#{module_obj}: #{module_src}"
+        mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{SRC_DIR} ${INCLUDE_PATH}"
+        mkfile.puts ""
+    end
+
+    # process link-only files
+    linkonly = cfg[:includes][:linkonly]
+    linkonly_objs = []
+    linkonly.each do |linkonlyfile|
+        linkonlybase = File.basename(linkonlyfile)
+        linkonlymodule_src = File.join(SRC_DIR, "#{linkonlyfile}.c")
+        linkonlymodule_obj = File.join(OBJ_DIR, "#{linkonlybase}.o")
+        linkonly_objs.push(linkonlymodule_obj)
+        #only create the target if we didn't already
+        if not makefile_targets.include? linkonlymodule_obj
+            makefile_targets.push(linkonlymodule_obj)
+            mkfile.puts "#{linkonlymodule_obj}: #{linkonlymodule_src}"
+            mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{SRC_DIR} ${INCLUDE_PATH}"
+            mkfile.puts ""
+        end
+    end
 
     # Create runners
     mkfile.puts "#{runner_source}: #{test}"
@@ -81,17 +110,14 @@ File.open(TEST_MAKEFILE, "w") do |mkfile|
 
     # Build runner
     mkfile.puts "#{runner_obj}: #{runner_source}"
-    mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{SRC_DIR} -I #{MOCKS_DIR} -I #{UNITY_SRC} -I #{CMOCK_SRC}"
+    mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{SRC_DIR} -I #{MOCKS_DIR} -I #{UNITY_SRC} -I #{CMOCK_SRC} ${INCLUDE_PATH}"
     mkfile.puts ""
 
     # Collect mocks to generate
-    cfg = {
-      src: test,
-      includes: generator.find_includes(File.readlines(test).join(''))
-    }
     system_mocks = cfg[:includes][:system].select{|name| name =~ MOCK_MATCHER}
     raise "Mocking of system headers is not yet supported!" if !system_mocks.empty?
     local_mocks = cfg[:includes][:local].select{|name| name =~ MOCK_MATCHER}
+
     module_names_to_mock = local_mocks.map{|name| "#{name.sub(/#{MOCK_PREFIX}/,'')}.h"}
     headers_to_mock = []
     module_names_to_mock.each do |name|
@@ -103,8 +129,9 @@ File.open(TEST_MAKEFILE, "w") do |mkfile|
         end
       end
       raise "Module header '#{name}' not found to mock!" unless header_to_mock
-      headers_to_mock << header_to_mock 
+      headers_to_mock << header_to_mock
     end
+
     all_headers_to_mock += headers_to_mock
     mock_objs = headers_to_mock.map do |hdr|
       mock_name = MOCK_PREFIX + File.basename(hdr, '.h')
@@ -114,18 +141,18 @@ File.open(TEST_MAKEFILE, "w") do |mkfile|
 
     # Build test suite
     mkfile.puts "#{test_obj}: #{test} #{module_obj} #{mock_objs.join(' ')}"
-    mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{SRC_DIR} -I #{UNITY_SRC} -I #{CMOCK_SRC} -I #{MOCKS_DIR}"
+    mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{SRC_DIR} -I #{UNITY_SRC} -I #{CMOCK_SRC} -I #{MOCKS_DIR} ${INCLUDE_PATH}"
     mkfile.puts ""
 
     # Build test suite executable
-    test_objs = "#{test_obj} #{runner_obj} #{module_obj} #{mock_objs.join(' ')} #{UNITY_OBJ} #{CMOCK_OBJ}"
+    test_objs = "#{test_obj} #{runner_obj} #{module_obj} #{mock_objs.join(' ')} #{linkonly_objs.join(' ')} #{UNITY_OBJ} #{CMOCK_OBJ}"
     mkfile.puts "#{test_bin}: #{test_objs}"
-    mkfile.puts "\t${CC} -o $@ #{test_objs}"
+    mkfile.puts "\t${CC} -o $@ ${LDFLAGS} #{test_objs}"
     mkfile.puts ""
 
     # Run test suite and generate report
     mkfile.puts "#{test_results}: #{test_bin}"
-    mkfile.puts "\t-#{test_bin} &> #{test_results}"
+    mkfile.puts "\t-#{test_bin} > #{test_results} 2>&1"
     mkfile.puts ""
 
     test_targets << test_bin
@@ -143,19 +170,19 @@ File.open(TEST_MAKEFILE, "w") do |mkfile|
     mkfile.puts ""
 
     mkfile.puts "#{mock_obj}: #{mock_src} #{mock_header}"
-    mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{MOCKS_DIR} -I #{SRC_DIR} -I #{UNITY_SRC} -I #{CMOCK_SRC}"
+    mkfile.puts "\t${CC} -o $@ -c $< ${TEST_CFLAGS} -I #{MOCKS_DIR} -I #{SRC_DIR} -I #{UNITY_SRC} -I #{CMOCK_SRC} ${INCLUDE_PATH}"
     mkfile.puts ""
   end
 
   # Create test summary task
   mkfile.puts "test_summary:"
-  mkfile.puts "\t@UNITY_DIR=${UNITY_DIR} ruby ${CMOCK_DIR}/scripts/test_summary.rb"
+  mkfile.puts "\t@UNITY_DIR=${UNITY_DIR} ruby ${CMOCK_DIR}/scripts/test_summary.rb #{suppress_error ? '--silent' : ''}"
   mkfile.puts ""
   mkfile.puts ".PHONY: test_summary"
   mkfile.puts ""
 
   # Create target to run all tests
-  mkfile.puts "test: #{test_targets.map{|t| t + '.result'}.join(' ')} test_summary"
+  mkfile.puts "test: #{test_targets.map{|t| t + '.testresult'}.join(' ')} test_summary"
   mkfile.puts ""
 
 end

@@ -5,7 +5,7 @@
 # ==========================================
 
 require File.expand_path(File.dirname(__FILE__)) + "/../test_helper"
-require 'cmock_generator_plugin_expect'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_expect'
 
 describe CMockGeneratorPluginExpect, "Verify CMockGeneratorPluginExpect Module Without Global Ordering" do
 
@@ -26,8 +26,8 @@ describe CMockGeneratorPluginExpect, "Verify CMockGeneratorPluginExpect Module W
   end
 
   it "have set up internal priority on init" do
-    assert_equal(nil,     @cmock_generator_plugin_expect.unity_helper)
-    assert_equal(5,       @cmock_generator_plugin_expect.priority)
+    assert_nil(@cmock_generator_plugin_expect.unity_helper)
+    assert_equal(5, @cmock_generator_plugin_expect.priority)
   end
 
   it "not include any additional include files" do

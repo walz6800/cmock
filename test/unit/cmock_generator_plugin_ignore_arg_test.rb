@@ -5,7 +5,7 @@
 # ==========================================
 
 require File.expand_path(File.dirname(__FILE__)) + "/../test_helper"
-require 'cmock_generator_plugin_ignore_arg'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_ignore_arg'
 
 describe CMockGeneratorPluginIgnoreArg, "Verify CMockGeneratorPluginIgnoreArg Module" do
 
@@ -21,9 +21,9 @@ describe CMockGeneratorPluginIgnoreArg, "Verify CMockGeneratorPluginIgnoreArg Mo
                                  :name => "chicken",
                                  :ptr? => false,
                                },
-                               { :type => "int*",
-                                 :name => "beef",
-                                 :ptr? => true,
+                               { :type   => "const int*",
+                                 :name   => "beef",
+                                 :ptr?   => true,
                                  :const? => true,
                                },
                                { :type => "int*",

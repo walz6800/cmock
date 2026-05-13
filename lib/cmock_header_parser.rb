@@ -6,12 +6,13 @@
 
 class CMockHeaderParser
 
-  attr_accessor :funcs, :c_attributes, :treat_as_void, :treat_externs
+  attr_accessor :funcs, :c_attr_noconst, :c_attributes, :treat_as_void, :treat_externs
 
   def initialize(cfg)
     @funcs = []
     @c_strippables = cfg.strippables
-    @c_attributes = (['const'] + cfg.attributes).uniq
+    @c_attr_noconst = cfg.attributes.uniq - ['const']
+    @c_attributes = ['const'] + c_attr_noconst
     @c_calling_conventions = cfg.c_calling_conventions.uniq
     @treat_as_void = (['void'] + cfg.treat_as_void).uniq
     @declaration_parse_matcher = /([\d\w\s\*\(\),\[\]]+??)\(([\d\w\s\*\(\),\.\[\]+-]*)\)$/m
@@ -48,7 +49,7 @@ class CMockHeaderParser
   def import_source(source)
 
     # let's clean up the encoding in case they've done anything weird with the characters we might find
-    source = source.force_encoding("ISO-8859-1").encode("utf-8", :replace => nil) if ($QUICK_RUBY_VERSION > 10900)
+    source = source.force_encoding("ISO-8859-1").encode("utf-8", :replace => nil)
 
     # void must be void for cmock _ExpectAndReturn calls to process properly, not some weird typedef which equates to void
     # to a certain extent, this action assumes we're chewing on pre-processed header files, otherwise we'll most likely just get stuff from @treat_as_void
@@ -74,12 +75,12 @@ class CMockHeaderParser
 
     # remove preprocessor statements and extern "C"
     source.gsub!(/^\s*#.*/, '')
-    source.gsub!(/extern\s+\"C\"\s+\{/, '')
+    source.gsub!(/extern\s+\"C\"\s*\{/, '')
 
     # enums, unions, structs, and typedefs can all contain things (e.g. function pointers) that parse like function prototypes, so yank them
     # forward declared structs are removed before struct definitions so they don't mess up real thing later. we leave structs keywords in function prototypes
     source.gsub!(/^[\w\s]*struct[^;\{\}\(\)]+;/m, '')                                      # remove forward declared structs
-    source.gsub!(/^[\w\s]*(enum|union|struct|typepdef)[\w\s]*\{[^\}]+\}[\w\s\*\,]*;/m, '') # remove struct, union, and enum definitions and typedefs with braces
+    source.gsub!(/^[\w\s]*(enum|union|struct|typedef)[\w\s]*\{[^\}]+\}[\w\s\*\,]*;/m, '')  # remove struct, union, and enum definitions and typedefs with braces
     source.gsub!(/(\W)(?:register|auto|static|restrict)(\W)/, '\1\2')                      # remove problem keywords
     source.gsub!(/\s*=\s*['"a-zA-Z0-9_\.]+\s*/, '')                                        # remove default value statements from argument lists
     source.gsub!(/^(?:[\w\s]*\W)?typedef\W[^;]*/m, '')                                     # remove typedef statements
@@ -93,11 +94,18 @@ class CMockHeaderParser
       "#{functype} #{$2.strip}(#{$3});"
     end
 
+    # remove nested pairs of braces because no function declarations will be inside of them (leave outer pair for function definition detection)
+    if (RUBY_VERSION.split('.')[0].to_i > 1)
+      #we assign a string first because (no joke) if Ruby 1.9.3 sees this line as a regex, it will crash.
+      r = "\\{([^\\{\\}]*|\\g<0>)*\\}"
+      source.gsub!(/#{r}/m, '{ }')
+    else
+      while source.gsub!(/\{[^\{\}]*\{[^\{\}]*\}[^\{\}]*\}/m, '{ }')
+      end
+    end
+
     # remove function definitions by stripping off the arguments right now
     source.gsub!(/\([^\)]*\)\s*\{[^\}]*\}/m, ";")
-
-    # remove pairs of braces because no function declarations will be inside of them
-    #source.gsub!(/\{[^\}]*\}/m, '')
 
     #drop extra white space to make the rest go faster
     source.gsub!(/^\s+/, '')          # remove extra white space from beginning of line
@@ -132,26 +140,79 @@ class CMockHeaderParser
     return funcs
   end
 
+  def parse_type_and_name(arg)
+    # Split up words and remove known attributes.  For pointer types, make sure
+    # to remove 'const' only when it applies to the pointer itself, not when it
+    # applies to the type pointed to.  For non-pointer types, remove any
+    # occurrence of 'const'.
+    arg.gsub!(/(\w)\*/,'\1 *') # pull asterisks away from preceding word
+    arg.gsub!(/\*(\w)/,'* \1') # pull asterisks away from following word
+    arg_array = arg.split
+    arg_info = divine_ptr_and_const(arg)
+    arg_info[:name] = arg_array[-1]
+
+    attributes = arg.include?('*') ? @c_attr_noconst : @c_attributes
+    attr_array = []
+    type_array = []
+
+    arg_array[0..-2].each do |word|
+      if attributes.include?(word)
+        attr_array << word
+      elsif @c_calling_conventions.include?(word)
+        arg_info[:c_calling_convention] = word
+      else
+        type_array << word
+      end
+    end
+
+    if arg_info[:const_ptr?]
+      attr_array << 'const'
+      type_array.delete_at(type_array.rindex('const'))
+    end
+
+    arg_info[:modifier] = attr_array.join(' ')
+    arg_info[:type] = type_array.join(' ').gsub(/\s+\*/,'*') # remove space before asterisks
+    return arg_info
+  end
+
   def parse_args(arg_list)
     args = []
     arg_list.split(',').each do |arg|
       arg.strip!
       return args if (arg =~ /^\s*((\.\.\.)|(void))\s*$/)   # we're done if we reach void by itself or ...
-      arg_array = arg.split
-      arg_elements = arg_array - @c_attributes              # split up words and remove known attributes
-      args << { :type   => (arg_type = arg_elements[0..-2].join(' ')),
-                :name   => arg_elements[-1],
-                :ptr?   => divine_ptr(arg_type),
-                :const? => arg_array.include?('const')
-              }
+
+      arg_info = parse_type_and_name(arg)
+      arg_info.delete(:modifier)             # don't care about this
+      arg_info.delete(:c_calling_convention) # don't care about this
+      args << arg_info
     end
     return args
   end
 
-  def divine_ptr(arg_type)
-    return false unless arg_type.include? '*'
-    return false if arg_type.gsub(/(const|char|\*|\s)+/,'').empty?
+  def divine_ptr(arg)
+    return false unless arg.include? '*'
+    # treat "const char *" and similar as a string, not a pointer
+    return false if /(^|\s)(const\s+)?char(\s+const)?\s*\*(?!.*\*)/ =~ arg
     return true
+  end
+
+  def divine_const(arg)
+    # a non-pointer arg containing "const" is a constant
+    # an arg containing "const" before the last * is a pointer to a constant
+    return ( arg.include?('*') ? (/(^|\s|\*)const(\s(\w|\s)*)?\*(?!.*\*)/ =~ arg)
+                               : (/(^|\s)const(\s|$)/ =~ arg) ) ? true : false
+  end
+
+  def divine_ptr_and_const(arg)
+    divination = {}
+
+    divination[:ptr?] = divine_ptr(arg)
+    divination[:const?] = divine_const(arg)
+
+    # an arg containing "const" after the last * is a constant pointer
+    divination[:const_ptr?] = (/\*(?!.*\*)\s*const(\s|$)/ =~ arg) ? true : false
+
+    return divination
   end
 
   def clean_args(arg_list)
@@ -159,9 +220,9 @@ class CMockHeaderParser
       return 'void'
     else
       c=0
-      arg_list.gsub!(/(\w+)(?:\s*\[[\s\d\w+-]*\])+/,'*\1')  # magically turn brackets into asterisks
-      arg_list.gsub!(/\s+\*/,'*')                           # remove space to place asterisks with type (where they belong)
-      arg_list.gsub!(/\*(\w)/,'* \1')                       # pull asterisks away from arg to place asterisks with type (where they belong)
+      arg_list.gsub!(/(\w+)(?:\s*\[\s*\(*[\s\d\w+-]*\)*\s*\])+/,'*\1')  # magically turn brackets into asterisks, also match for parentheses that come from macros
+      arg_list.gsub!(/\s+\*/,'*')                                       # remove space to place asterisks with type (where they belong)
+      arg_list.gsub!(/\*(\w)/,'* \1')                                   # pull asterisks away from arg to place asterisks with type (where they belong)
 
       #scan argument list for function pointers and replace them with custom types
       arg_list.gsub!(/([\w\s\*]+)\(+\s*\*[\*\s]*([\w\s]*)\s*\)+\s*\(((?:[\w\s\*]*,?)*)\s*\)*/) do |m|
@@ -202,35 +263,23 @@ class CMockHeaderParser
     args = regex_match[2].strip
 
     #process function attributes, return type, and name
-    descriptors = regex_match[1]
-    descriptors.gsub!(/\s+\*/,'*')     #remove space to place asterisks with return type (where they belong)
-    descriptors.gsub!(/\*(\w)/,'* \1') #pull asterisks away from function name to place asterisks with return type (where they belong)
-    descriptors = descriptors.split    #array of all descriptor strings
+    parsed = parse_type_and_name(regex_match[1])
 
-    #grab name
-    decl[:name] = descriptors[-1]      #snag name as last array item
-
-    #build attribute and return type strings
-    decl[:modifier] = []
-    rettype = []
-    descriptors[0..-2].each do |word|
-      if @c_attributes.include?(word)
-        decl[:modifier] << word
-      elsif @c_calling_conventions.include?(word)
-        decl[:c_calling_convention] = word
-      else
-        rettype << word
-      end
+    decl[:name] = parsed[:name]
+    decl[:modifier] = parsed[:modifier]
+    unless parsed[:c_calling_convention].nil?
+      decl[:c_calling_convention] = parsed[:c_calling_convention]
     end
-    decl[:modifier] = decl[:modifier].join(' ')
-    rettype = rettype.join(' ')
+
+    rettype = parsed[:type]
     rettype = 'void' if (@local_as_void.include?(rettype.strip))
-    decl[:return] = { :type   => rettype,
-                      :name   => 'cmock_to_return',
-                      :ptr?   => divine_ptr(rettype),
-                      :const? => decl[:modifier].split(/\s/).include?('const'),
-                      :str    => "#{rettype} cmock_to_return",
-                      :void?  => (rettype == 'void')
+    decl[:return] = { :type       => rettype,
+                      :name       => 'cmock_to_return',
+                      :str        => "#{rettype} cmock_to_return",
+                      :void?      => (rettype == 'void'),
+                      :ptr?       => parsed[:ptr?],
+                      :const?     => parsed[:const?],
+                      :const_ptr? => parsed[:const_ptr?]
                     }
 
     #remove default argument statements from mock definitions

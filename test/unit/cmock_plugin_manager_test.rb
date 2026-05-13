@@ -5,10 +5,10 @@
 # ==========================================
 
 require File.expand_path(File.dirname(__FILE__)) + "/../test_helper"
-require 'cmock_plugin_manager'
-require 'cmock_generator_plugin_expect'
-require 'cmock_generator_plugin_ignore'
-require 'cmock_generator_plugin_cexception'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_plugin_manager'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_expect'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_ignore'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_cexception'
 
 describe CMockPluginManager, "Verify CMockPluginManager Module" do
 
@@ -21,12 +21,8 @@ describe CMockPluginManager, "Verify CMockPluginManager Module" do
       :ignore => :args_and_calls
     )
 
-    #if (RUBY_VERSION.split('.')[0].to_i >= 2)
-    #  @config.define_singleton_method( :plugins ){ @plugins || [] }
-    #  @config.define_singleton_method( :plugins= ){ |val| @plugins = val }
-    #else
-      eval "class << @config\ndef plugins\n@plugins||[]\nend\ndef plugins=(val)\n@plugins=val\nend\nend\n"
-    #end
+    eval "class << @config\ndef plugins\n@plugins||[]\nend\ndef plugins=(val)\n@plugins=val\nend\nend\n"
+
   end
 
   after do

@@ -5,7 +5,7 @@
 # ==========================================
 
 require File.expand_path(File.dirname(__FILE__)) + "/../test_helper"
-require 'cmock_generator_plugin_return_thru_ptr'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_return_thru_ptr'
 
 describe CMockGeneratorPluginReturnThruPtr, "Verify CMockGeneratorPluginReturnThruPtr Module" do
 
@@ -27,9 +27,9 @@ describe CMockGeneratorPluginReturnThruPtr, "Verify CMockGeneratorPluginReturnTh
                                  :name => "chicken",
                                  :ptr? => false,
                                },
-                               { :type => "int*",
-                                 :name => "beef",
-                                 :ptr? => true,
+                               { :type   => "const int*",
+                                 :name   => "beef",
+                                 :ptr?   => true,
                                  :const? => true,
                                },
                                { :type => "int*",
@@ -52,7 +52,7 @@ describe CMockGeneratorPluginReturnThruPtr, "Verify CMockGeneratorPluginReturnTh
 
   def complex_func_expect
     @utils.expect :ptr_or_str?, false, ['int']
-    @utils.expect :ptr_or_str?, true, ['int*']
+    @utils.expect :ptr_or_str?, true, ['const int*']
     @utils.expect :ptr_or_str?, true, ['int*']
   end
 
@@ -124,11 +124,13 @@ describe CMockGeneratorPluginReturnThruPtr, "Verify CMockGeneratorPluginReturnTh
     expected =
       "  if (cmock_call_instance->ReturnThruPtr_tofu_Used)\n" +
       "  {\n" +
-      "    memcpy(tofu, cmock_call_instance->ReturnThruPtr_tofu_Val,\n" +
+      "    UNITY_TEST_ASSERT_NOT_NULL(tofu, cmock_line, CMockStringPtrIsNULL);\n" +
+      "    memcpy((void*)tofu, (void*)cmock_call_instance->ReturnThruPtr_tofu_Val,\n" +
       "      cmock_call_instance->ReturnThruPtr_tofu_Size);\n" +
-      "  }\n" +
+      "  }\n"
 
     returned = @cmock_generator_plugin_return_thru_ptr.mock_implementation(@complex_func).join("")
+    assert_equal(expected, returned)
   end
 
 end

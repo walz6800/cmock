@@ -5,22 +5,30 @@
 # ==========================================
 
 require File.expand_path(File.dirname(__FILE__)) + "/../test_helper"
-require 'cmock_generator_plugin_array'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_plugin_array'
+require File.expand_path(File.dirname(__FILE__)) + '/../../lib/cmock_generator_utils'
+
+class UtilsStub
+  def helpers
+    {}
+  end
+  def arg_type_with_const(arg)
+    CMockGeneratorUtils.arg_type_with_const(arg)
+  end
+  def code_add_base_expectation(func)
+    "mock_retval_0"
+  end
+end
 
 describe CMockGeneratorPluginArray, "Verify CMockPGeneratorluginArray Module" do
   before do
-    create_mocks :utils
-
     #no strict ordering
     @config = create_stub(
       :when_ptr => :compare_data,
       :enforce_strict_ordering => false,
       :respond_to? => true )
 
-    @utils = create_stub(
-       :helpers => {},
-       :code_add_base_expectation => "mock_retval_0"
-    )
+    @utils = UtilsStub.new
 
     @cmock_generator_plugin_array = CMockGeneratorPluginArray.new(@config, @utils)
   end
@@ -29,8 +37,8 @@ describe CMockGeneratorPluginArray, "Verify CMockPGeneratorluginArray Module" do
   end
 
   it "have set up internal priority" do
-    assert_equal(nil,     @cmock_generator_plugin_array.unity_helper)
-    assert_equal(8,       @cmock_generator_plugin_array.priority)
+    assert_nil(@cmock_generator_plugin_array.unity_helper)
+    assert_equal(8, @cmock_generator_plugin_array.priority)
   end
 
   it "not include any additional include files" do
@@ -88,10 +96,10 @@ describe CMockGeneratorPluginArray, "Verify CMockPGeneratorluginArray Module" do
 
   it "add another mock function declaration for functions of style 'const char* func(const int* tofu)'" do
     function = {:name => "Pine",
-                :args => [{ :type => "int*",
-                           :name => "tofu",
-                           :ptr? => true,
-                           :const? => true,
+                :args => [{ :type   => "const int*",
+                            :name   => "tofu",
+                            :ptr?   => true,
+                            :const? => true,
                          }],
                 :return => test_return[:string],
                 :contains_ptr? => true }
